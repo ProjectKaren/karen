@@ -13,11 +13,6 @@
 
 (cl-annot:enable-annot-syntax)
 
-(defstruct html-element
-  (tag nil)
-  (attribute (make-hash-table :test #'eq))
-  (children nil))
-
 (defclass has-parent ()
   ((parent :accessor get-parent
            :initarg :parent
@@ -85,37 +80,80 @@
 ; svg
 (defclass xml-element (has-sibling has-parent has-children tagged-element container drawable) ())
 
-; Plane text draw
-(defmethod draw (cr (e text-element))
+;;;
+;;; 
+;;;
+(declaim (inline %displace))
+(defun %displace (e)
   (let ((parent (get-parent e))
         (previous (get-previous e)))
-    (unless (null parent)
+    (when (and (not (null parent)) (typep parent 'drawable)) ;; if display:static or relative
       (setf (get-x e) (get-x parent)
             (get-y e) (get-y parent)))
-    (unless (null previous)
-      (setf (get-x e)
-            (+ (get-x previous) (get-w previous))
-            (get-y e)
-            (+ (get-y previous) (get-h previous))))
-    (draw-text cr (get-text e) 16 (get-x e) (get-y e))))
+    (when (and (not (null previous)) (typep previous 'drawable))
+      (setf (get-x e) ;; if position:inline
+            (+ (get-x previous) (get-w previous))))))
 
-(defvar +html+
-  '(:html nil (
-    (:head nil (
-      (:meta ((:charset . "utf-8")) nil)
-      (:title nil ("Document"))
-    ))
-    (:body nil (
-      (:h1 nil ("Hello world!"))
-    ))
-  ))
-)
+;;;
+;;; Container draw method
+;;; container-element
+;;;
+(defmethod draw (cr (e container-element))
+  (%displace e))
+
+;;;
+;;; Set container bound size method
+;;; container-element
+;;;
+(defmethod calc-bound (cr (e container-element)))
+
+;;;
+;;; Text draw method
+;;; text-element
+;;;
+(defmethod draw (cr (e text-element))
+  (%displace e)
+  (draw-text cr (get-text e) 16 (get-x e) (get-y e)))
+
+;;;
+;;; Set text bound size method
+;;; text-element
+;;;
+(defmethod calc-bound (cr (e text-element))
+  (let ((bound (cairo-text-extents cr (get-text e))))
+    (setf (get-w e) (cairo-text-extents-t-width bound)
+          (get-h e) (cairo-text-extents-t-height bound))))
+
+;;;;
+;;;; Draw text to surface function
+;;;;
+(defun draw-text (cr text size x y)
+  (princ "draw text")
+  (cairo-set-source-rgb cr 0.0 0.0 0.0)
+  (cairo-select-font-face cr "TakaoP Gothic" :normal :normal)
+  (cairo-set-font-size cr size)
+  (let ((te (cairo-text-extents cr text)))
+    (cairo-move-to cr
+      x
+      (+ y (cairo-text-extents-t-height te)) )
+    (cairo-show-text cr text))) 
+
+(defun first-draw (cr e)
+  (print (type-of e))
+  (when (typep e 'drawable)
+    (calc-bound cr e)
+    (draw cr e)
+    (when (typep e 'has-children)
+      (dolist (child (get-children e))
+        (first-draw cr child)))))
 
 ;;;;
 ;;;; Make HTML element class function
-;;;; 
+;;;;
+@export
 (defun make-element (expr &key parent previous)
   (cond
+    ((null expr) (print "call null") nil)
     ((stringp expr) ;; string
       (make-instance 'text-element :text expr :parent parent :previous previous))
     ((listp expr) ;; s-expr
@@ -148,8 +186,7 @@
         (when (and (listp alist) (not (null alist)))
           (dolist (atr alist)
             (setf (gethash (car atr) (get-attr e)) (cdr atr))))
-        e))
-    (t nil))) ;; error
+        e))))
 
 (defun create-main-window ()
   (make-instance 'gtk-window
@@ -158,24 +195,8 @@
     :default-width 640
     :default-height 480))
 
-(defun create-drawing-area ()
-  (make-instance 'gtk-drawing-area
-    :width-request 640
-    :height-request 480))
-
-(defun draw-text (cr text size x y)
-  (princ "draw text")
-  (cairo-set-source-rgb cr 0.0 0.0 0.0)
-  (cairo-select-font-face cr "TakaoP Gothic" :normal :normal)
-  (cairo-set-font-size cr size)
-  (let ((te (cairo-text-extents cr text)))
-    (cairo-move-to cr
-      x
-      (+ y (cairo-text-extents-t-height te)) )
-    (cairo-show-text cr text)))
-
 @export
-(defun main ()
+(defun main (e)
   (let ((surface nil))
     (within-main-loop
       (let (;; Create a toplevel window
@@ -196,7 +217,8 @@
                 1.44
                 1.44)
               (cairo-set-line-width cr 0.1)
-              (draw-text cr "つらい" 14 0 0)
+              ;(draw-text cr "つらい" 14 0 0)
+              (first-draw cr e)
               (cairo-destroy cr)
               t)))
         ;; Show the window

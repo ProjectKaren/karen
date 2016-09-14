@@ -54,36 +54,79 @@
                :initform 0)
    (draw-height :accessor get-h
                 :initarg :h
-                :initform 0)))
+                :initform 0)
+   (below-x :accessor get-below-x
+            :initarg :below-x
+            :initform 0)
+   (below-y :accessor get-below-y
+            :initarg :below-y
+            :initform 0)))
 
 ; head
-(defclass head-element (has-sibling has-parent has-children tagged-element) ())
+(defclass head-element
+  (has-sibling
+   has-parent
+   has-children
+   tagged-element)
+  ())
 
 ; (html body div span article section table h* list other)
-(defclass container-element (has-sibling has-parent has-children tagged-element drawable) ())
+(defclass container-element
+  (has-sibling
+   has-parent
+   has-children
+   tagged-element
+   drawable)
+  ())
 
 ; plane text
-(defclass text-element (has-sibling has-parent drawable)
+(defclass text-element
+  (has-sibling
+   has-parent
+   drawable)
   ((text :accessor get-text
          :initarg :text
          :initform "")))
 
 ; meta
-(defclass meta-element (has-sibling has-parent has-children tagged-element) ())
+(defclass meta-element
+  (has-sibling
+   has-parent
+   has-children
+   tagged-element)
+  ())
 
 ; title script style
-(defclass data-element (has-sibling has-parent has-children tagged-element) ())
+(defclass data-element
+  (has-sibling
+   has-parent
+   has-children
+   tagged-element)
+  ())
 
 ; img
-(defclass image-element (has-sibling has-parent has-children tagged-element drawable) ())
+(defclass image-element
+  (has-sibling
+   has-parent
+   has-children
+   tagged-element
+   drawable)
+  ())
 
 ; svg
-(defclass xml-element (has-sibling has-parent has-children tagged-element container drawable) ())
+(defclass xml-element
+  (has-sibling
+   has-parent
+   has-children
+   tagged-element
+   container
+   drawable)
+  ())
 
 ;;;
 ;;; 
 ;;;
-(declaim (inline %displace))
+@inline
 (defun %displace (e)
   (let ((parent (get-parent e))
         (previous (get-previous e)))
@@ -92,14 +135,20 @@
             (get-y e) (get-y parent)))
     (when (and (not (null previous)) (typep previous 'drawable))
       (setf (get-x e) ;; if position:inline
-            (+ (get-x previous) (get-w previous))))))
+            (get-below-x previous)
+            (get-y e)
+            (get-below-y previous)
+            ;(+ (get-x previous) (get-w previous))
+            ))))
 
 ;;;
 ;;; Container draw method
 ;;; container-element
 ;;;
 (defmethod draw (cr (e container-element))
-  (%displace e))
+  (%displace e)
+  (setf (get-below-x e)
+        (+ (get-x e) (get-w e))))
 
 ;;;
 ;;; Set container bound size method
@@ -113,30 +162,33 @@
 ;;;
 (defmethod draw (cr (e text-element))
   (%displace e)
-  (draw-text cr (get-text e) 16 (get-x e) (get-y e)))
+  (draw-text cr (get-text e) 16 (get-x e) (get-y e))
+  (setf (get-below-x e)
+        (+ (get-x e) (get-w e))))
 
 ;;;
 ;;; Set text bound size method
 ;;; text-element
 ;;;
+;;; display:block, display:inline, word-wrap: wrap, width: auto, height: auto
 (defmethod calc-bound (cr (e text-element))
   (let ((bound (cairo-text-extents cr (get-text e))))
-    (setf (get-w e) (cairo-text-extents-t-width bound)
-          (get-h e) (cairo-text-extents-t-height bound))))
+    (setf (get-w e) (* 1.44 (cairo-text-extents-t-width bound))
+          (get-h e) (* 1.44 (cairo-text-extents-t-height bound)))))
 
-;;;;
-;;;; Draw text to surface function
-;;;;
+;;;
+;;; Draw text to surface function
+;;;
+;;; font-size, letter-spacing, color, bold
 (defun draw-text (cr text size x y)
   (princ "draw text")
   (cairo-set-source-rgb cr 0.0 0.0 0.0)
   (cairo-select-font-face cr "TakaoP Gothic" :normal :normal)
   (cairo-set-font-size cr size)
   (let ((te (cairo-text-extents cr text)))
-    (cairo-move-to cr
-      x
-      (+ y (cairo-text-extents-t-height te)) )
-    (cairo-show-text cr text))) 
+    (cairo-move-to cr x 
+      (+ y (cairo-text-extents-t-height te)))
+    (cairo-show-text cr text)))
 
 (defun first-draw (cr e)
   (print (type-of e))
@@ -145,7 +197,16 @@
     (draw cr e)
     (when (typep e 'has-children)
       (dolist (child (get-children e))
-        (first-draw cr child)))))
+        (let ((bound (first-draw cr child)))
+          (unless (null bound)
+            (incf (get-w e) (first bound))  ;; inline 
+          )))
+      (incf (get-below-x e) (get-w e)))
+    (cons (get-w e) (get-h e))))
+
+(defmacro get-style (e rule)
+  `(gethash ,rule (style-of ,e)))
+
 
 ;;;;
 ;;;; Make HTML element class function
@@ -181,7 +242,7 @@
           (let ((children (list)))
             (dotimes (i (length clist))
               (push (make-element (nth i clist) :parent e :previous (first children)) children))
-            (setf (get-children e) children)))
+            (setf (get-children e) (reverse children))))
         ;; Attatch a-list to attribute of HTML element
         (when (and (listp alist) (not (null alist)))
           (dolist (atr alist)
@@ -217,7 +278,6 @@
                 1.44
                 1.44)
               (cairo-set-line-width cr 0.1)
-              ;(draw-text cr "つらい" 14 0 0)
               (first-draw cr e)
               (cairo-destroy cr)
               t)))
